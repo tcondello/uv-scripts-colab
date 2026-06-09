@@ -11,22 +11,43 @@
 
 Reads N rows from a Hugging Face dataset, runs sentiment classification with a
 small distilbert pipeline, and prints results plus GPU info. Designed to
-confirm the `colab run` workflow end-to-end before building real recipes.
+confirm the workflow end-to-end before building real recipes.
+
+Config (env vars first, then positional args for local `uv run` use):
+    DATASET     HF dataset id      [stanfordnlp/sst2]
+    N_ROWS      Rows to embed      [10]
 
 Usage:
-    # Local (with uv, on a GPU box):
+    # Local with uv (positional args ok):
     uv run hello-gpu.py [DATASET] [N_ROWS]
 
-    # Remote (Colab CLI, on a managed T4):
-    colab run --gpu T4 recipes/hello-gpu.py [DATASET] [N_ROWS]
+    # Via colab-hf-run (env vars):
+    DATASET=stanfordnlp/sst2 N_ROWS=20 \\
+        bin/colab-hf-run recipes/hello-gpu.py
 
-Defaults: stanfordnlp/sst2, 10 rows.
+    # Or `colab run` directly (no env-var forwarding, positional args work):
+    colab run --gpu T4 recipes/hello-gpu.py
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
+
+
+def _arg(env: str, pos: int, default: str) -> str:
+    """Read config from env var first, then positional arg, then default.
+
+    When this script is piped into `colab exec` (e.g. by colab-hf-run),
+    sys.argv is the *kernel's* argv (its runtime json path), not user args
+    — so we always check env vars first.
+    """
+    if env in os.environ and os.environ[env]:
+        return os.environ[env]
+    if pos < len(sys.argv) and not sys.argv[pos].endswith(".json"):
+        return sys.argv[pos]
+    return default
 
 
 def _ensure_deps() -> None:
@@ -51,8 +72,8 @@ def _ensure_deps() -> None:
 
 
 def main() -> None:
-    dataset_id = sys.argv[1] if len(sys.argv) > 1 else "stanfordnlp/sst2"
-    n_rows = int(sys.argv[2]) if len(sys.argv) > 2 else 10
+    dataset_id = _arg("DATASET", 1, "stanfordnlp/sst2")
+    n_rows = int(_arg("N_ROWS", 2, "10"))
 
     _ensure_deps()
 

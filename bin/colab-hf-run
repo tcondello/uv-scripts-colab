@@ -88,7 +88,7 @@ if [ -z "$HF_TOKEN_LOCAL" ]; then
 fi
 
 # --- Forwarded env vars ------------------------------------------------------
-DEFAULT_FORWARD="INPUT_DATASET OUTPUT_DATASET TEXT_COLUMN IMAGE_COLUMN MODEL_ID BATCH_SIZE LIMIT SPLIT"
+DEFAULT_FORWARD="INPUT_DATASET OUTPUT_DATASET DATASET TEXT_COLUMN IMAGE_COLUMN MODEL_ID BATCH_SIZE LIMIT N_ROWS SPLIT"
 ALL_FORWARD="$DEFAULT_FORWARD ${FORWARD_ENV:-}"
 
 # Build the kernel-side env-setup preamble. Use Python + json.dumps for

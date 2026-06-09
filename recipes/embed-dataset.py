@@ -144,10 +144,14 @@ def main() -> None:
     )
 
     # --- Load dataset --------------------------------------------------------
-    split_expr = f"{split}[:{limit}]" if limit else split
-    with console.status(f"[cyan]Loading {input_id} ({split_expr})...", spinner="dots"):
+    # NOTE: don't use sliced split syntax (e.g. "train[:1000]") — push_to_hub
+    # rejects split names that don't match `^\w+(\.\w+)*$`. Load the full split
+    # then .select() to enforce a limit.
+    with console.status(f"[cyan]Loading {input_id} (split={split})...", spinner="dots"):
         t0 = time.time()
-        ds = load_dataset(input_id, split=split_expr)
+        ds = load_dataset(input_id, split=split)
+    if limit and len(ds) > limit:
+        ds = ds.select(range(limit))
     console.print(
         f"[green]✓[/green] loaded [bold]{len(ds):,}[/bold] rows "
         f"({time.time() - t0:.1f}s), columns: {ds.column_names}"

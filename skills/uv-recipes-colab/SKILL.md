@@ -54,6 +54,7 @@ recipes/
   gliner-pii.py         zero-shot PII extraction with GLiNER → HF dataset
   whisper-transcribe.py Whisper-large-v3 audio → text transcripts → HF dataset
   dataset-stats.py      per-column profiling + markdown report (CPU-only)
+  vlm-detect.py         VLM object detection (Qwen2.5-VL-3B default) → HF dataset
 ```
 
 Each file's docstring lists its env vars and an example invocation. To inspect a recipe before running, just `curl` and `head` the URL — or open it in your editor. The PEP 723 block at the top tells you the deps.

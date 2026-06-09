@@ -129,7 +129,7 @@ These bit us building the recipes; capturing them so they don't surprise you:
 | Hardware | NVIDIA L4 / A10 / A100 / H100 | NVIDIA T4 / L4 / A100 / H100 (Colab fleet) |
 | Billing | Pay-per-second, HF pricing | Colab compute units |
 | Reads URL directly? | Yes | Yes — local file **or** http(s):// URL (e.g. raw GitHub / HF dataset URL) |
-| PEP 723 native? | Yes (uv-aware) | No — recipes self-install deps |
+| Dep install | Runner is `uv run`, which reads each recipe's `# /// script ... ///` block and installs pinned versions into a throwaway env | Colab's Jupyter kernel just runs Python — it doesn't read PEP 723. Each recipe ships a small `_ensure_deps()` `pip install` shim for anything not in the Colab base image. The PEP 723 block is still present, so the same file also runs with `uv run` locally. |
 | Auth | `HF_TOKEN` forwarded via `--secrets` | Wrapper reads `~/.cache/huggingface/token` |
 
 The two are complementary — use whichever managed-GPU platform you're already paying for.

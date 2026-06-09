@@ -89,6 +89,7 @@ Every recipe reads from and/or writes to the [Hugging Face Hub](https://huggingf
 | `recipes/hello-gpu.py` | Smoke test: prints GPU info + sentiment over N rows of an HF dataset. Use this to confirm your Colab CLI setup works end-to-end. |
 | `recipes/embed-dataset.py` | Embed any HF text dataset on GPU with `sentence-transformers` and push the embedded dataset back to the Hub. |
 | `recipes/clip-embed.py` | Embed an HF image dataset (PIL images **or** URLs) on GPU with SigLIP / CLIP and push back. Parallel image fetching (8 workers, configurable). |
+| `recipes/gliner-pii.py` | Zero-shot PII extraction with [GLiNER](https://github.com/urchade/GLiNER). Scans a text column for emails, phone numbers, names, addresses, SSNs, etc. Pushes back a dataset with a `pii_entities` column (`{start, end, text, label, score}` per finding). Inspired by [`davanstrien/uv-scripts-for-ai/gliner`](https://github.com/davanstrien/uv-scripts-for-ai/tree/main/gliner). |
 
 PRs welcome — fine-tuning recipes (QLoRA producing an adapter back on the Hub), CLIP-text recipes for cross-modal search, and OCR recipes would all fit.
 
@@ -133,6 +134,10 @@ These bit us building the recipes; capturing them so they don't surprise you:
 | Auth | `HF_TOKEN` forwarded via `--secrets` | Wrapper reads `~/.cache/huggingface/token` |
 
 The two are complementary — use whichever managed-GPU platform you're already paying for.
+
+## For AI agents
+
+[`skills/uv-recipes-colab/SKILL.md`](skills/uv-recipes-colab/SKILL.md) is a Claude / Cursor / Agent SDK skill that teaches an AI agent how to discover, invoke, and adapt these recipes. Drop it into your agent's skills directory (or load it via your SDK of choice) so the model can pick the right recipe, set the right env vars, and run it on Colab without you having to copy-paste invocations.
 
 ## Where this goes next
 

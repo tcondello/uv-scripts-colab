@@ -47,8 +47,32 @@ Each recipe reads from and/or writes to the [Hugging Face Hub](https://huggingfa
 | Recipe | What it does |
 |---|---|
 | `recipes/hello-gpu.py` | Smoke test: prints GPU info, runs distilbert sentiment over N rows of a HF dataset. Use this to confirm your Colab CLI setup works end-to-end. |
+| `recipes/embed-dataset.py` | Embed any HF dataset on GPU with `sentence-transformers` and push the embedded dataset back to the Hub. Run via the wrapper below. |
 
-*(More to come — OCR, embeddings, fine-tuning. PRs welcome once the pattern is settled.)*
+*(More to come — OCR, fine-tuning, reranker training. PRs welcome.)*
+
+## The `colab-hf-run` wrapper
+
+`colab run` can't pass env vars into the kernel, and the Colab UI's secret-vault mechanism doesn't work from `colab exec`. So `huggingface_hub` calls inside a recipe can't see your `HF_TOKEN` — fine for public reads, fatal for any write-back.
+
+`bin/colab-hf-run` is a thin bash wrapper that fixes this. It reads your local `~/.cache/huggingface/token`, creates a Colab session, injects `HF_TOKEN` plus a whitelist of config env vars into the kernel as a preamble, then streams the recipe's output back to your terminal — `rich` progress bars and all. Session is stopped on exit, even on Ctrl-C.
+
+**One-time setup:**
+
+```bash
+hf auth login          # paste a write-scoped token
+```
+
+**Run a recipe that writes back to the Hub:**
+
+```bash
+INPUT_DATASET=stanfordnlp/sst2 \
+OUTPUT_DATASET=your-username/sst2-MiniLM-embeddings \
+LIMIT=1000 \
+bin/colab-hf-run recipes/embed-dataset.py
+```
+
+Forwarded env vars: `INPUT_DATASET`, `OUTPUT_DATASET`, `TEXT_COLUMN`, `MODEL_ID`, `BATCH_SIZE`, `LIMIT`, `SPLIT`. Add more with `FORWARD_ENV="VAR1 VAR2"`. Override GPU flavor with `COLAB_GPU=A100`. Keep the session alive for debugging with `KEEP_SESSION=1`.
 
 ## How it compares
 

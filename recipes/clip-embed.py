@@ -42,10 +42,12 @@ Usage:
 """
 from __future__ import annotations
 
+import io
 import os
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 
 def _ensure_deps() -> None:
@@ -111,6 +113,8 @@ def main() -> None:
         default="google/siglip-base-patch16-224",
     )
     batch_size = int(_cfg("BATCH_SIZE", default="32"))
+    fetch_workers = int(_cfg("FETCH_WORKERS", default="8"))
+    fetch_timeout = float(_cfg("FETCH_TIMEOUT", default="5.0"))
     limit_raw = _cfg("LIMIT")
     limit = int(limit_raw) if limit_raw else None
     split = _cfg("SPLIT", default="train")
@@ -135,7 +139,7 @@ def main() -> None:
             f"output:  [green]{output_id}[/green]\n"
             f"model:   [magenta]{model_id}[/magenta]\n"
             f"device:  [yellow]{gpu_name}[/yellow]\n"
-            f"batch:   {batch_size}",
+            f"batch:   {batch_size}  fetch_workers: {fetch_workers}",
             title="config",
             border_style="blue",
         )
@@ -212,11 +216,43 @@ def main() -> None:
     out_dim: int | None = None
 
     # --- Embed in batches with progress -------------------------------------
+    # Image-download IS the bottleneck on this kind of workload (URL-based
+    # image datasets); we keep the GPU fed by pre-fetching each batch's
+    # images concurrently via a thread pool. The ds_for_embed accessor still
+    # triggers HF datasets' lazy URL fetch, but multiple at once.
+    import requests
+    from PIL import Image as PILImage
+
     n = len(ds)
     embeddings: list[list[float] | None] = [None] * n
     valid_mask: list[bool] = [False] * n
     skipped = 0
     t0 = time.time()
+
+    # Build a list of (idx, url) for direct fetching. We bypass datasets'
+    # cast machinery here so we can control concurrency and timeouts.
+    urls = ds[image_col]  # list of strings if original col was string
+    using_urls = isinstance(urls[0], str) if urls else False
+
+    sess = requests.Session()
+    sess.headers.update({"User-Agent": "uv-scripts-colab/clip-embed"})
+
+    def _fetch_one(i: int):
+        try:
+            if using_urls:
+                resp = sess.get(urls[i], timeout=fetch_timeout)
+                resp.raise_for_status()
+                img = PILImage.open(io.BytesIO(resp.content))
+            else:
+                img = ds_for_embed[i][image_col]
+                if img is None:
+                    return i, None
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            img.load()  # decode now while still in the worker thread
+            return i, img
+        except Exception:
+            return i, None
 
     with Progress(
         SpinnerColumn(),
@@ -232,6 +268,7 @@ def main() -> None:
         TextColumn("[red]{task.fields[skipped]}[/red]"),
         console=console,
         transient=False,
+        refresh_per_second=2,  # throttle stdout volume for stable WS connection
     ) as progress:
         task = progress.add_task(
             "[cyan]embedding[/cyan]",
@@ -239,50 +276,47 @@ def main() -> None:
             rate="",
             skipped="",
         )
-        for start in range(0, n, batch_size):
-            end = min(start + batch_size, n)
-            images = []
-            idxs = []
-            for i in range(start, end):
-                try:
-                    img = ds_for_embed[i][image_col]
+        with ThreadPoolExecutor(max_workers=fetch_workers) as pool:
+            for start in range(0, n, batch_size):
+                end = min(start + batch_size, n)
+                images = []
+                idxs = []
+                # Fetch this batch's images in parallel
+                for i, img in pool.map(_fetch_one, range(start, end)):
                     if img is None:
                         skipped += 1
-                        continue
-                    if img.mode != "RGB":
-                        img = img.convert("RGB")
-                    images.append(img)
-                    idxs.append(i)
-                except Exception:
-                    skipped += 1
+                    else:
+                        images.append(img)
+                        idxs.append(i)
 
-            if not images:
+                if not images:
+                    progress.update(
+                        task, advance=(end - start),
+                        skipped=f"skip:{skipped}" if skipped else "",
+                    )
+                    continue
+
+                with torch.no_grad():
+                    inputs = processor(images=images, return_tensors="pt").to(device)
+                    feats = _extract_image_features(model, inputs)
+                    feats = torch.nn.functional.normalize(feats, dim=-1)
+                    if out_dim is None:
+                        out_dim = feats.shape[-1]
+                    vecs = feats.cpu().numpy().tolist()
+
+                for i, v in zip(idxs, vecs):
+                    embeddings[i] = v
+                    valid_mask[i] = True
+
+                elapsed = max(time.time() - t0, 1e-6)
+                done = start + (end - start)
+                rate = f"{done / elapsed:,.1f} img/s"
                 progress.update(
-                    task, advance=(end - start), skipped=f"skip:{skipped}"
+                    task,
+                    advance=(end - start),
+                    rate=rate,
+                    skipped=(f"skip:{skipped}" if skipped else ""),
                 )
-                continue
-
-            with torch.no_grad():
-                inputs = processor(images=images, return_tensors="pt").to(device)
-                feats = _extract_image_features(model, inputs)
-                feats = torch.nn.functional.normalize(feats, dim=-1)
-                if out_dim is None:
-                    out_dim = feats.shape[-1]
-                vecs = feats.cpu().numpy().tolist()
-
-            for i, v in zip(idxs, vecs):
-                embeddings[i] = v
-                valid_mask[i] = True
-
-            elapsed = max(time.time() - t0, 1e-6)
-            done = start + (end - start)
-            rate = f"{done / elapsed:,.1f} img/s"
-            progress.update(
-                task,
-                advance=(end - start),
-                rate=rate,
-                skipped=(f"skip:{skipped}" if skipped else ""),
-            )
 
     ok = sum(valid_mask)
     console.print(

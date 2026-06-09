@@ -54,6 +54,19 @@ bin/colab-hf-run recipes/embed-dataset.py
 
 That's it — same shape for every recipe.
 
+### You don't even need to clone
+
+`bin/colab-hf-run` accepts an http(s):// URL as the recipe argument. If you have the wrapper on your `PATH` (or save it as `~/bin/colab-hf-run`), you can run any recipe from this repo (or any raw URL) without cloning:
+
+```bash
+INPUT_DATASET=stanfordnlp/sst2 \
+OUTPUT_DATASET=your-username/sst2-MiniLM-embeddings \
+LIMIT=1000 \
+colab-hf-run https://raw.githubusercontent.com/tcondello/uv-scripts-colab/main/recipes/embed-dataset.py
+```
+
+The same works for recipes hosted as raw files on a HF dataset repo, a gist, or anywhere else — the wrapper just `curl`s the file, then pipes it (plus the kernel preamble) into `colab exec`.
+
 ## What's a recipe?
 
 A single Python file with a [PEP 723](https://peps.python.org/pep-0723/) metadata block at the top declaring its dependencies:
@@ -85,11 +98,12 @@ PRs welcome — fine-tuning recipes (QLoRA producing an adapter back on the Hub)
 
 `bin/colab-hf-run` is a thin bash wrapper that fixes this. It:
 
-1. Reads your HF token from `~/.cache/huggingface/token`
-2. Creates a fresh Colab session (`colab new --gpu T4`)
-3. Injects `HF_TOKEN` + a whitelist of config env vars into the kernel as a preamble (`os.environ[...] = "..."`)
-4. Streams the recipe's stdout/stderr back to your terminal — Rich progress bars and all
-5. Stops the session on exit, even on Ctrl-C
+1. Accepts either a local file path **or** an `http(s)://` URL for the recipe — URL recipes are `curl`'d to a temp file
+2. Reads your HF token from `~/.cache/huggingface/token`
+3. Creates a fresh Colab session (`colab new --gpu T4`)
+4. Injects `HF_TOKEN` + a whitelist of config env vars into the kernel as a preamble (`os.environ[...] = "..."`)
+5. Streams the recipe's stdout/stderr back to your terminal — Rich progress bars and all
+6. Stops the session on exit, even on Ctrl-C
 
 Whitelisted env vars (set in your shell, the wrapper forwards them):
 `INPUT_DATASET`, `OUTPUT_DATASET`, `TEXT_COLUMN`, `IMAGE_COLUMN`, `MODEL_ID`, `BATCH_SIZE`, `LIMIT`, `SPLIT`. Add more with `FORWARD_ENV="VAR1 VAR2"`. Override GPU flavor with `COLAB_GPU=A100`. Debug with `KEEP_SESSION=1`.
@@ -111,7 +125,7 @@ These bit us building the recipes; capturing them so they don't surprise you:
 | Remote runner | `hf jobs uv run <url>` | `bin/colab-hf-run recipes/foo.py` |
 | Hardware | NVIDIA L4 / A10 / A100 / H100 | NVIDIA T4 / L4 / A100 / H100 (Colab fleet) |
 | Billing | Pay-per-second, HF pricing | Colab compute units |
-| Reads URL directly? | Yes | No — runs local file (for now) |
+| Reads URL directly? | Yes | Yes — local file **or** http(s):// URL (e.g. raw GitHub / HF dataset URL) |
 | PEP 723 native? | Yes (uv-aware) | No — recipes self-install deps |
 | Auth | `HF_TOKEN` forwarded via `--secrets` | Wrapper reads `~/.cache/huggingface/token` |
 

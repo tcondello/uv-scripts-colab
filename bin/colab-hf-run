@@ -9,11 +9,11 @@
 #   5. stopping the session on exit / Ctrl-C
 #
 # Usage:
-#   bin/colab-hf-run RECIPE_PATH
+#   bin/colab-hf-run RECIPE             # local path or http(s):// URL
 #
 # Recipe-config env vars are forwarded if set in your local shell:
-#   INPUT_DATASET  OUTPUT_DATASET  TEXT_COLUMN  MODEL_ID
-#   BATCH_SIZE     LIMIT           SPLIT
+#   INPUT_DATASET  OUTPUT_DATASET  TEXT_COLUMN  IMAGE_COLUMN
+#   MODEL_ID       BATCH_SIZE      LIMIT       SPLIT
 #
 # Wrapper-config env vars:
 #   COLAB_GPU=T4              GPU flavor (T4, A100, ...)
@@ -21,24 +21,54 @@
 #   FORWARD_ENV="VAR1 VAR2"   Whitespace-separated extras to forward
 #   KEEP_SESSION=1            Don't stop the session on exit (for debugging)
 #
-# Example:
-#   INPUT_DATASET=stanfordnlp/sst2 OUTPUT_DATASET=you/sst2-emb LIMIT=1000 \
-#       bin/colab-hf-run recipes/embed-dataset.py
+# Examples:
+#   # Local file:
+#   bin/colab-hf-run recipes/embed-dataset.py
+#
+#   # Direct from this repo (raw GitHub URL):
+#   bin/colab-hf-run \
+#     https://raw.githubusercontent.com/tcondello/uv-scripts-colab/main/recipes/embed-dataset.py
+#
+#   # Or anywhere — recipes on HF dataset repos, gists, etc:
+#   bin/colab-hf-run https://huggingface.co/datasets/foo/bar/raw/main/recipe.py
 
 set -euo pipefail
 
-SCRIPT="${1:-}"
-if [ -z "$SCRIPT" ]; then
-  echo "usage: $0 RECIPE_PATH" >&2
-  exit 2
-fi
-if [ ! -f "$SCRIPT" ]; then
-  echo "error: recipe not found: $SCRIPT" >&2
+RECIPE="${1:-}"
+if [ -z "$RECIPE" ]; then
+  echo "usage: $0 RECIPE_PATH_OR_URL" >&2
   exit 2
 fi
 
+# --- Resolve recipe: local file or URL ---------------------------------------
+# If it looks like a URL, fetch it to a temp file. Otherwise treat as a path.
+# (Cleanup happens in the combined trap further down.)
+TMP_SCRIPT=""
+
+case "$RECIPE" in
+  http://*|https://*)
+    TMP_SCRIPT=$(mktemp -t colab-hf-recipe.XXXXXX.py)
+    echo "[colab-hf-run] fetching $RECIPE..." >&2
+    if ! curl -fsSL "$RECIPE" -o "$TMP_SCRIPT"; then
+      echo "error: failed to download recipe from $RECIPE" >&2
+      exit 2
+    fi
+    SCRIPT="$TMP_SCRIPT"
+    # Derive a friendly name for the session from the URL basename.
+    SCRIPT_BASE=$(basename "${RECIPE%%\?*}" .py)
+    ;;
+  *)
+    if [ ! -f "$RECIPE" ]; then
+      echo "error: recipe not found: $RECIPE" >&2
+      echo "       (pass a local file path or an http(s):// URL)" >&2
+      exit 2
+    fi
+    SCRIPT="$RECIPE"
+    SCRIPT_BASE=$(basename "$SCRIPT" .py)
+    ;;
+esac
+
 GPU="${COLAB_GPU:-T4}"
-SCRIPT_BASE=$(basename "$SCRIPT" .py)
 SESSION="${COLAB_SESSION:-r-${SCRIPT_BASE}-$$}"
 
 # --- Resolve HF token from local cache ---------------------------------------
@@ -82,6 +112,9 @@ PY
 
 # --- Session lifecycle -------------------------------------------------------
 cleanup() {
+  # Cleanup downloaded tmp file (if we fetched from URL)
+  [ -n "$TMP_SCRIPT" ] && rm -f "$TMP_SCRIPT"
+  # Cleanup colab session
   if [ "${KEEP_SESSION:-0}" = "1" ]; then
     echo "[colab-hf-run] KEEP_SESSION=1 — leaving '$SESSION' running. Stop with: colab stop -s $SESSION" >&2
     return

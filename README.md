@@ -90,6 +90,8 @@ Every recipe reads from and/or writes to the [Hugging Face Hub](https://huggingf
 | `recipes/embed-dataset.py` | Embed any HF text dataset on GPU with `sentence-transformers` and push the embedded dataset back to the Hub. |
 | `recipes/clip-embed.py` | Embed an HF image dataset (PIL images **or** URLs) on GPU with SigLIP / CLIP and push back. Parallel image fetching (8 workers, configurable). |
 | `recipes/gliner-pii.py` | Zero-shot PII extraction with [GLiNER](https://github.com/urchade/GLiNER). Scans a text column for emails, phone numbers, names, addresses, SSNs, etc. Pushes back a dataset with a `pii_entities` column (`{start, end, text, label, score}` per finding). Inspired by [`davanstrien/uv-scripts-for-ai/gliner`](https://github.com/davanstrien/uv-scripts-for-ai/tree/main/gliner). |
+| `recipes/whisper-transcribe.py` | Transcribe an HF audio dataset on GPU with OpenAI Whisper (default: `whisper-large-v3`). Auto-resamples to 16 kHz, chunks long clips, adds `transcription` (and optional `language`) column. |
+| `recipes/dataset-stats.py` | Profile any HF dataset — per-column stats by dtype (numeric percentiles, string length distributions, class-label value counts, image/audio specifics). Pushes a markdown report as the new dataset's `README.md` plus a structured `column_stats` table for queries. CPU-only. |
 
 PRs welcome — fine-tuning recipes (QLoRA producing an adapter back on the Hub), CLIP-text recipes for cross-modal search, and OCR recipes would all fit.
 
@@ -120,6 +122,8 @@ These bit us building the recipes; capturing them so they don't surprise you:
 - **OAuth on first run.** Default `--auth oauth2` opens a browser; the URL only shows in stderr. If you're driving the CLI from a wrapped terminal and don't see the URL, check `~/.config/colab-cli/colab.log`.
 - **`sys.argv` is the kernel's argv, not yours.** When the wrapper pipes a recipe into `colab exec` via stdin, `sys.argv` inside the kernel is the kernel's own argv (a runtime json path), **not** what you passed on the command line. Recipes meant for the wrapper should read config from env vars; positional args only work when invoking with `colab run <file> arg1 ...` directly.
 - **Colab T4 capacity is bursty.** Heavy run-loops occasionally hit a `503 Service Unavailable` on session assignment for a few minutes. Wait and retry; if it persists, try `--gpu L4` or check `colab pay`.
+- **One Colab session at a time.** Launching two `bin/colab-hf-run` invocations in parallel hits `TooManyAssignmentsError`. Run sequentially, or assemble a multi-step recipe that uses one session.
+- **Avoid POSIX-standard env var names for recipe config.** The Colab kernel pre-sets system locale vars like `LANG`, `LANGUAGE`, `LC_ALL`. A recipe that read `LANGUAGE` directly would silently pick up `en_US:en` from the kernel env instead of a default. Prefer namespaced names (`WHISPER_LANGUAGE`, etc.). The `colab-hf-run` whitelist forwards namespaced names only.
 - **GitHub raw URLs are CDN-cached.** When you push a recipe fix and run it via `https://raw.githubusercontent.com/...`, expect a few minutes of lag before the CDN serves the new version. Add a cache-bust `?t=$(date +%s)` to the URL during iteration, or test the local file path first.
 
 ## How it compares to HF Jobs

@@ -48,10 +48,12 @@ Forwarded env vars by default: `INPUT_DATASET OUTPUT_DATASET DATASET TEXT_COLUMN
 
 ```
 recipes/
-  hello-gpu.py       smoke test: GPU info + distilbert sentiment over N rows
-  embed-dataset.py   sentence-transformers text embeddings → HF dataset
-  clip-embed.py      SigLIP/CLIP image embeddings (parallel URL fetch) → HF dataset
-  gliner-pii.py      zero-shot PII extraction with GLiNER → HF dataset
+  hello-gpu.py          smoke test: GPU info + distilbert sentiment over N rows
+  embed-dataset.py      sentence-transformers text embeddings → HF dataset
+  clip-embed.py         SigLIP/CLIP image embeddings (parallel URL fetch) → HF dataset
+  gliner-pii.py         zero-shot PII extraction with GLiNER → HF dataset
+  whisper-transcribe.py Whisper-large-v3 audio → text transcripts → HF dataset
+  dataset-stats.py      per-column profiling + markdown report (CPU-only)
 ```
 
 Each file's docstring lists its env vars and an example invocation. To inspect a recipe before running, just `curl` and `head` the URL — or open it in your editor. The PEP 723 block at the top tells you the deps.
@@ -79,6 +81,8 @@ GLiNER and other prediction recipes produce **bootstrap labels, not ground truth
 - **`sys.argv` is the kernel's argv, not yours.** When the wrapper pipes a recipe into `colab exec` via stdin, `sys.argv[0]` is `ipykernel_launcher` and `sys.argv[1+]` is a `kernel-uuid.json` path. **Recipes for the wrapper should read config from env vars**, not positional args. (Positional args work with `colab run <file>` directly.)
 - **GitHub raw URLs are CDN-cached.** Expect 2–10 min of lag between `git push` and the new content showing up at `raw.githubusercontent.com`. Cache-bust during iteration with `?t=$(date +%s)`.
 - **Colab T4 assignment is bursty.** Sustained churn can return `503 Service Unavailable` on session create. Wait and retry; try `COLAB_GPU=L4` if it persists.
+- **One Colab session at a time.** Launching `bin/colab-hf-run` twice in parallel raises `TooManyAssignmentsError`. Run sequentially.
+- **POSIX-standard env var names collide with the Colab kernel.** Vars like `LANG`, `LANGUAGE`, `LC_ALL`, `USER`, `HOME`, `PATH` are pre-set in the kernel environment. A recipe that reads them via `os.environ.get("LANGUAGE")` will get the system locale (`en_US:en`), not an unset value. Use namespaced names (`WHISPER_LANGUAGE`, `OCR_PROMPT`, etc.) for any recipe config.
 - **Long runs need bandwidth discipline.** A 30-minute run with default Rich update rates (10 Hz) can saturate the kernel WebSocket and drop the connection — losing in-memory progress. The image recipe throttles Rich to 2 Hz and parallelizes URL fetching; copy that pattern for any recipe doing heavy IO.
 - **`load_dataset(id, split="train[:N]")` then `push_to_hub` fails.** Split names must match `^\w+(\.\w+)*$`. Load full, then `ds.select(range(N))`.
 

@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# colab-hf-run — run a recipe on Colab CLI with HF_TOKEN auto-injected.
+#
+# Solves the "HF_TOKEN doesn't auto-forward to `colab exec`" gotcha by:
+#   1. reading your local HF token (cached via `hf auth login`)
+#   2. spinning up a Colab session
+#   3. injecting HF_TOKEN + any whitelisted env vars into the kernel
+#   4. streaming the recipe's stdout/stderr back to your terminal
+#   5. stopping the session on exit / Ctrl-C
+#
+# Usage:
+#   bin/colab-hf-run RECIPE_PATH
+#
+# Recipe-config env vars are forwarded if set in your local shell:
+#   INPUT_DATASET  OUTPUT_DATASET  TEXT_COLUMN  MODEL_ID
+#   BATCH_SIZE     LIMIT           SPLIT
+#
+# Wrapper-config env vars:
+#   COLAB_GPU=T4              GPU flavor (T4, A100, ...)
+#   COLAB_SESSION=name        Override the auto-generated session name
+#   FORWARD_ENV="VAR1 VAR2"   Whitespace-separated extras to forward
+#   KEEP_SESSION=1            Don't stop the session on exit (for debugging)
+#
+# Example:
+#   INPUT_DATASET=stanfordnlp/sst2 OUTPUT_DATASET=you/sst2-emb LIMIT=1000 \
+#       bin/colab-hf-run recipes/embed-dataset.py
+
+set -euo pipefail
+
+SCRIPT="${1:-}"
+if [ -z "$SCRIPT" ]; then
+  echo "usage: $0 RECIPE_PATH" >&2
+  exit 2
+fi
+if [ ! -f "$SCRIPT" ]; then
+  echo "error: recipe not found: $SCRIPT" >&2
+  exit 2
+fi
+
+GPU="${COLAB_GPU:-T4}"
+SCRIPT_BASE=$(basename "$SCRIPT" .py)
+SESSION="${COLAB_SESSION:-r-${SCRIPT_BASE}-$$}"
+
+# --- Resolve HF token from local cache ---------------------------------------
+# `hf auth login` writes a plain-text token to ~/.cache/huggingface/token
+# (override via HF_HOME). Reading the file directly avoids a Python dep here.
+HF_TOKEN_LOCAL="${HF_TOKEN:-}"
+if [ -z "$HF_TOKEN_LOCAL" ]; then
+  HF_TOKEN_FILE="${HF_HOME:-$HOME/.cache/huggingface}/token"
+  if [ -f "$HF_TOKEN_FILE" ]; then
+    HF_TOKEN_LOCAL=$(tr -d '[:space:]' <"$HF_TOKEN_FILE")
+  fi
+fi
+if [ -z "$HF_TOKEN_LOCAL" ]; then
+  echo "error: no HF token found." >&2
+  echo "       run: hf auth login  (or export HF_TOKEN=hf_...)" >&2
+  exit 1
+fi
+
+# --- Forwarded env vars ------------------------------------------------------
+DEFAULT_FORWARD="INPUT_DATASET OUTPUT_DATASET TEXT_COLUMN MODEL_ID BATCH_SIZE LIMIT SPLIT"
+ALL_FORWARD="$DEFAULT_FORWARD ${FORWARD_ENV:-}"
+
+# Build the kernel-side env-setup preamble. Use Python + json.dumps for
+# bulletproof string escaping (tokens, paths, anything with quotes).
+PREAMBLE=$(
+  HF_TOKEN="$HF_TOKEN_LOCAL" FORWARD="$ALL_FORWARD" python3 <<'PY'
+import json, os
+lines = ["import os"]
+lines.append("os.environ['HF_TOKEN'] = " + json.dumps(os.environ['HF_TOKEN']))
+forwarded = []
+for var in os.environ["FORWARD"].split():
+    val = os.environ.get(var)
+    if val:
+        lines.append(f"os.environ[{json.dumps(var)}] = {json.dumps(val)}")
+        forwarded.append(var)
+extras = ", ".join(forwarded) if forwarded else "(none)"
+lines.append(f"print('[kernel] HF_TOKEN injected; extras: {extras}', flush=True)")
+print("\n".join(lines))
+PY
+)
+
+# --- Session lifecycle -------------------------------------------------------
+cleanup() {
+  if [ "${KEEP_SESSION:-0}" = "1" ]; then
+    echo "[colab-hf-run] KEEP_SESSION=1 — leaving '$SESSION' running. Stop with: colab stop -s $SESSION" >&2
+    return
+  fi
+  echo "[colab-hf-run] stopping session $SESSION..." >&2
+  colab stop -s "$SESSION" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT INT TERM
+
+echo "[colab-hf-run] creating session '$SESSION' on $GPU..." >&2
+colab new -s "$SESSION" --gpu "$GPU"
+
+echo "[colab-hf-run] executing $SCRIPT..." >&2
+
+# Pipe preamble + recipe contents into the kernel as one exec. Using stdin
+# (no -f) so we don't have to write a tmp file. force_terminal=True inside
+# the recipe handles ANSI rendering across the pipe.
+{
+  printf '%s\n\n' "$PREAMBLE"
+  cat "$SCRIPT"
+} | colab exec -s "$SESSION"

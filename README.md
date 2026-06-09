@@ -117,6 +117,9 @@ These bit us building the recipes; capturing them so they don't surprise you:
 - **Long-running runs need bandwidth discipline.** A 30-minute run with default Rich update rates can saturate the kernel WebSocket and drop the connection (losing all in-memory progress). The image-embed recipe throttles Rich to 2Hz and parallelizes image downloads (8 threads) — full 10k poster run fits in ~6 min. If you write a longer recipe, consider periodic checkpointing back to the Hub.
 - **`load_dataset("foo", split="train[:N]")` then `push_to_hub` fails.** The split name `train[:N]` doesn't match `^\w+(\.\w+)*$`. Load full, then `.select(range(N))`.
 - **OAuth on first run.** Default `--auth oauth2` opens a browser; the URL only shows in stderr. If you're driving the CLI from a wrapped terminal and don't see the URL, check `~/.config/colab-cli/colab.log`.
+- **`sys.argv` is the kernel's argv, not yours.** When the wrapper pipes a recipe into `colab exec` via stdin, `sys.argv` inside the kernel is the kernel's own argv (a runtime json path), **not** what you passed on the command line. Recipes meant for the wrapper should read config from env vars; positional args only work when invoking with `colab run <file> arg1 ...` directly.
+- **Colab T4 capacity is bursty.** Heavy run-loops occasionally hit a `503 Service Unavailable` on session assignment for a few minutes. Wait and retry; if it persists, try `--gpu L4` or check `colab pay`.
+- **GitHub raw URLs are CDN-cached.** When you push a recipe fix and run it via `https://raw.githubusercontent.com/...`, expect a few minutes of lag before the CDN serves the new version. Add a cache-bust `?t=$(date +%s)` to the URL during iteration, or test the local file path first.
 
 ## How it compares to HF Jobs
 
